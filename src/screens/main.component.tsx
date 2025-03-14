@@ -8,7 +8,6 @@ import {
     Share,
     StyleSheet,
     Text,
-    ToastAndroid,
     TouchableOpacity,
     View,
 } from "react-native";
@@ -27,6 +26,8 @@ import {AdImpression, AdType, BannerAd, BannerAdSize, CAS,} from "react-native-c
 import {useCasContext} from "../contexts/cas.context";
 import {MediationManagerEvent} from "react-native-cas/src/utils/types.ts";
 import {setBothWallpapers} from "react-native-wallpaper-manager-one";
+import {AnalyticsCallOptions} from "firebase/analytics";
+import Toast from 'react-native-simple-toast';
 
 type TabData = Record<string, string>;
 type TabsData = Record<string, TabData>
@@ -34,6 +35,28 @@ type TabsData = Record<string, TabData>
 type TabsDoc = {
     "tabs": TabsData
 }[]
+
+/**
+ * @throws never
+ */
+const showToast = (...args: Parameters<typeof Toast['show']>) => {
+    try {
+        Toast.show(...args)
+    } catch (raw) {
+        console.warn(raw);
+    }
+}
+
+/**
+ * @throws never
+ */
+const logEvent = (name: string, params?: { [key: string]: any }, options?: AnalyticsCallOptions) => {
+    try {
+        analytics().logEvent(name, params, options)
+    } catch (raw) {
+        console.warn(raw)
+    }
+}
 
 const Main = () => {
     const [tabs, setTabs] = useState<TabsDoc>([]);
@@ -233,13 +256,13 @@ const Main = () => {
     }, []);
 
     const saveImageToGallery = useCallback(async () => {
-        ToastAndroid.show("Загрузка...", ToastAndroid.SHORT)
+        showToast("Загрузка...", Toast.SHORT)
         if (!await showRewarded()) {
-            ToastAndroid.show("Не удалось загрузить, попробуйте позже.", ToastAndroid.SHORT)
+            showToast("Не удалось загрузить, попробуйте позже.", Toast.SHORT)
             return;
         }
         // noinspection ES6MissingAwait
-        analytics().logEvent("download_Wallpaper", {
+        logEvent("download_Wallpaper", {
             image_url: getCurrentImageUrl(),
             tab: activeTab,
         });
@@ -248,7 +271,10 @@ const Main = () => {
             // Запрос разрешений на Android
 
             // Скачивание изображения
-            const downloadDest = `${RNFS.DownloadDirectoryPath}/${Math.random()}.jpg`;
+            const downloadDest = Platform.select({
+                ios: `${RNFS.CachesDirectoryPath}/${Math.random()}.jpg`,
+                default: `${RNFS.DownloadDirectoryPath}/${Math.random()}.jpg` // DownloadDirectoryPath - ANDROID ONLY
+            });
             const downloadResult = await RNFS.downloadFile({
                 fromUrl: getCurrentImageUrl(),
                 toFile: downloadDest,
@@ -258,29 +284,30 @@ const Main = () => {
                 // Добавление изображения в галерею
                 CameraRoll.save(downloadDest, {type: "photo"})
                     .then(() =>
-                        ToastAndroid.show(
+                        showToast(
                             "Изображение сохранено в галерею",
-                            ToastAndroid.SHORT,
+                            Toast.SHORT,
                         ),
                     )
                     .catch((error) => {
-                        ToastAndroid.show(
+                        showToast(
                             "Не удалось сохранить изображение",
-                            ToastAndroid.SHORT,
+                            Toast.SHORT,
                         );
 
                         console.error(error);
                     });
             } else {
-                ToastAndroid.show(
+                showToast(
                     "Не удалось сохранить изображение.",
-                    ToastAndroid.SHORT,
+                    Toast.SHORT,
                 );
             }
         } catch (error) {
-            ToastAndroid.show(
+            console.log(error);
+            showToast(
                 "Произошла ошибка при сохранении изображения.",
-                ToastAndroid.SHORT,
+                Toast.SHORT,
             );
 
             console.error(error);
@@ -288,18 +315,18 @@ const Main = () => {
     }, [showRewarded, getCurrentImageUrl]);
 
     const setWallpaper = useCallback(async () => {
-        ToastAndroid.show("Загрузка...", ToastAndroid.SHORT)
+        showToast("Загрузка...", Toast.SHORT)
         if (!await showRewarded()) {
-            ToastAndroid.show("Не удалось загрузить, попробуйте позже.", ToastAndroid.SHORT)
+            showToast("Не удалось загрузить, попробуйте позже.", Toast.SHORT)
             return;
         }
         // noinspection ES6MissingAwait
-        analytics().logEvent("set_Wallpaper", {
+        logEvent("set_Wallpaper", {
             image_url: getCurrentImageUrl(),
             tab: activeTab,
         });
 
-        ToastAndroid.show("Обои успешно установлены.", ToastAndroid.SHORT)
+        showToast("Обои успешно установлены.", Toast.SHORT)
         await setBothWallpapers(getCurrentImageUrl());
     }, [showRewarded, getCurrentImageUrl])
 
