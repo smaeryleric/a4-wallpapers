@@ -47,7 +47,7 @@
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string></string>
 	<key>NSUserTrackingUsageDescription</key>
-	<string>Get ads that are more interesting and support keeping this app free by allowing tracking</string>
+	<string>Получите более интересную рекламу и поддержите бесплатную работу этого приложения, разрешив отслеживание</string>
 	<key>SKAdNetworkItems</key>
 	<array>
 		<dict>
