@@ -327,7 +327,7 @@ const Main = () => {
                                         handleImagePress(index);
 
                                         setTimeout(() => {
-                                            CAS.showInterstitial();
+                                            CAS.showInterstitial(Platform.OS === 'android');
                                         }, 1000);
                                     }}
                                 >
