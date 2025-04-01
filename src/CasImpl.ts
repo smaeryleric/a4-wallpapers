@@ -84,6 +84,7 @@ export default class CasImpl implements Cas {
         }
 
         return new Promise<boolean>((resolve) => {
+            this._manager?.loadRewardedAd();
             const loadedSubscription = this._manager!.addListener(MediationManagerEvent.AdLoaded, () => {
                 const callbacks = this._createCallbacks("Rewarded")
                 const newCallbacks = {
