@@ -11,7 +11,7 @@ import {
     TouchableOpacity,
     View,
 } from "react-native";
-import React, {useCallback, useEffect, useRef, useState} from "react";
+import React, {useCallback, useEffect, useState} from "react";
 import {collection, getDocs} from "firebase/firestore";
 import {db} from "../util/config";
 import Tab from "../ui/tab.component";
@@ -21,13 +21,11 @@ import RNFS from "react-native-fs";
 import {CameraRoll} from "@react-native-camera-roll/camera-roll";
 import {ChevronLeft, Save, Share2Icon, Wallpaper} from "lucide-react-native";
 import analytics from "@react-native-firebase/analytics";
-import type {BannerAdRef} from "react-native-cas";
-import {AdImpression, AdType, BannerAd, BannerAdSize, CAS,} from "react-native-cas";
-import {useCasContext} from "../contexts/cas.context";
-import {MediationManagerEvent} from "react-native-cas/src/utils/types.ts";
+import {BannerAd, BannerAdSize} from "react-native-cas";
 import {setBothWallpapers} from "react-native-wallpaper-manager-one";
 import {AnalyticsCallOptions} from "firebase/analytics";
 import Toast from 'react-native-simple-toast';
+import CasImpl from "../CasImpl.ts";
 
 type TabData = Record<string, string>;
 type TabsData = Record<string, TabData>
@@ -58,10 +56,13 @@ const logEvent = (name: string, params?: { [key: string]: any }, options?: Analy
     }
 }
 
+const CAS = new CasImpl();
+// noinspection JSIgnoredPromiseFromCall
+CAS.init();
+
 const Main = () => {
     const [tabs, setTabs] = useState<TabsDoc>([]);
     const [loading, setLoading] = useState(false);
-    const [showBanner, setShowBanner] = useState(false);
     const [activeTab, setActiveTab] = useState<string | null>(null);
     const [urls, setUrls] = useState<{ url: string }[]>([]);
     const [modal, setModal] = useState(false);
@@ -109,15 +110,7 @@ const Main = () => {
             setUrls(images);
         }
     }, [activeTab, loading]);
-    const context = useCasContext();
-    const ref = useRef<BannerAdRef | null>(null);
 
-    useEffect(() => {
-        CAS.debugValidateIntegration();
-        CAS.setSettings({
-            testDeviceIDs: ["6618149427"],
-        });
-    }, []);
     useEffect(() => {
         const backAction = () => {
             if (modal) {
@@ -139,125 +132,9 @@ const Main = () => {
         return urls[currentIndex].url;
     };
 
-    const delay = async (ms: number) => new Promise((res) => setTimeout(res, ms));
-
-    const initCas = useCallback(async () => {
-        try {
-            // Validate CAS SDK integration
-            await CAS.debugValidateIntegration();
-
-            // Build the CAS ad manager
-            const {manager, result} = await CAS.buildManager(
-                {
-                    consentFlow: {
-                        enabled: true,
-                        requestATT: true,
-                    },
-                    testMode: false,
-                    userId: "user_id",
-                    adTypes: [
-                        AdType.Interstitial,
-                        AdType.Banner,
-                        AdType.Rewarded,
-                        AdType.AppOpen,
-                    ],
-                    casId:
-                        Platform.OS === "ios" ? "6618149427" : "com.wallpapers.provider",
-                },
-                (consentResult) => {
-                    console.log("Consent flow result:", consentResult);
-                },
-            );
-
-            // Store the initialized manager in the context
-            context.setManager(manager);
-            console.log("CAS manager initialized successfully:", result);
-            setShowBanner(true);
-        } catch (error) {
-            console.error("Error initializing CAS:", error);
-        }
-    }, []);
-
-    const showInterstitial = useCallback(async () => {
-        const {manager} = context;
-
-        if (manager) {
-            await manager.loadInterstitial();
-
-            while (true) {
-                const isReady = await manager.isInterstitialReady();
-
-                if (isReady) {
-                    await manager.showInterstitial(
-                        createCallbacks("Interstitial", context.logCasInfo),
-                    );
-                    break;
-                } else {
-                    await delay(1000);
-                }
-            }
-        }
-    }, [context]);
-
-    const showRewarded = useCallback(async () => {
-        const {manager} = context;
-
-        if (!manager) {
-            return false;
-        }
-
-        return new Promise((resolve) => {
-            const loadedSubscription = manager.addListener(MediationManagerEvent.AdLoaded, () => {
-                const callbacks = createCallbacks("Rewarded", context.logCasInfo)
-                const newCallbacks = {
-                    ...callbacks,
-                    onComplete: () => {
-                        callbacks.onComplete();
-                        loadedSubscription.remove();
-                        failedSubscription.remove();
-                        resolve(true)
-                    }
-                };
-                manager.showRewardedAd(newCallbacks);
-            })
-            const failedSubscription = manager.addListener(MediationManagerEvent.AdFailedToLoad, () => {
-                loadedSubscription.remove();
-                failedSubscription.remove();
-                resolve(false);
-            })
-        })
-    }, [context]);
-
-    const createCallbacks = (
-        adType: string,
-        logger: (...data: any[]) => void,
-    ) => ({
-        onShown: () => {
-            logger(adType + " shown");
-        },
-        onShowFailed: (message: string) => {
-            logger(adType + " shown failed, error: ", message);
-        },
-        onClicked: () => {
-            logger(adType + " shown clicked");
-        },
-        onComplete: () => {
-            logger(adType + " shown completed");
-        },
-        onClosed: () => {
-            logger(adType + " shown closed");
-        },
-        onImpression: (ad: AdImpression) => {
-            logger(adType + " shown, impression: ", JSON.stringify(ad));
-        },
-    });
-    useEffect(() => {
-        initCas();
-    }, []);
-
     const saveImageToGallery = useCallback(async () => {
         showToast("Загрузка...", Toast.SHORT)
-        if (!await showRewarded()) {
+        if (!await CAS.showRewarded(true)) {
             showToast("Не удалось загрузить, попробуйте позже.", Toast.SHORT)
             return;
         }
@@ -312,11 +189,11 @@ const Main = () => {
 
             console.error(error);
         }
-    }, [showRewarded, getCurrentImageUrl]);
+    }, [getCurrentImageUrl]);
 
     const setWallpaper = useCallback(async () => {
         showToast("Загрузка...", Toast.SHORT)
-        if (!await showRewarded()) {
+        if (!await CAS.showRewarded(true)) {
             showToast("Не удалось загрузить, попробуйте позже.", Toast.SHORT)
             return;
         }
@@ -328,7 +205,7 @@ const Main = () => {
 
         showToast("Обои успешно установлены.", Toast.SHORT)
         await setBothWallpapers(getCurrentImageUrl());
-    }, [showRewarded, getCurrentImageUrl])
+    }, [getCurrentImageUrl])
 
     return (
         <SafeAreaView style={styles.container}>
@@ -450,7 +327,7 @@ const Main = () => {
                                         handleImagePress(index);
 
                                         setTimeout(() => {
-                                            showInterstitial();
+                                            CAS.showInterstitial();
                                         }, 1000);
                                     }}
                                 >
