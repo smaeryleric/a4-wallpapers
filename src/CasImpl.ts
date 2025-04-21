@@ -1,5 +1,5 @@
 import {Cas} from "./Cas";
-import {MediationManagerEvent, AdImpression, AdType, CAS} from "react-native-cas";
+import {AdImpression, AdType, CAS, MediationManagerEvent} from "react-native-cas";
 import {Platform} from "react-native";
 import {MediationManager} from "react-native-cas/lib/typescript/modules/mediation-manager.module";
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -62,6 +62,22 @@ export default class CasImpl implements Cas {
         const result = await this._showInterstitialAd();
         await AsyncStorage.setItem("lastInterstitialShownTime", Date.now().toString());
         return result;
+    }
+
+    async showRewardedForAction(action: string) {
+        const countKey = `rewardedCount_${action}`;
+        let count = parseInt((await AsyncStorage.getItem(countKey)) || '0', 10);
+        count += 1;
+
+        if (count >= 3) {
+            await AsyncStorage.setItem(countKey, '0'); // reset count
+
+            return this._showRewardedAd();
+        } else {
+            await AsyncStorage.setItem(countKey, count.toString());
+            console.log(`Rewarded ad not shown. Current count for ${action}: ${count}`);
+            return false;
+        }
     }
 
     async showRewarded(immediately = false) {

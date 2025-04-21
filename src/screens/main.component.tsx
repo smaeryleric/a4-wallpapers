@@ -128,9 +128,13 @@ const Main = () => {
             return;
         }
         showToast("Загрузка...", Toast.SHORT)
-        if (!await CAS.showRewarded(true)) {
-            showToast("Не удалось загрузить, попробуйте позже.", Toast.SHORT)
-            return;
+        if (Platform.OS === "android") {
+            if (!await CAS.showRewarded(true)) {
+                showToast("Не удалось загрузить, попробуйте позже.", Toast.SHORT)
+                return;
+            }
+        } else {
+            await CAS.showRewardedForAction('SAVE_IMAGE_TO_GALLERY')
         }
         // noinspection ES6MissingAwait
         logEvent("download_Wallpaper", {
@@ -190,9 +194,13 @@ const Main = () => {
             return;
         }
         showToast("Загрузка...", Toast.SHORT)
-        if (!await CAS.showRewarded(true)) {
-            showToast("Не удалось загрузить, попробуйте позже.", Toast.SHORT)
-            return;
+        if (Platform.OS === "android") {
+            if (!await CAS.showRewarded(true)) {
+                showToast("Не удалось загрузить, попробуйте позже.", Toast.SHORT)
+                return;
+            }
+        } else {
+            await CAS.showRewardedForAction('SET_WALLPAPER')
         }
         // noinspection ES6MissingAwait
         logEvent("set_Wallpaper", {
