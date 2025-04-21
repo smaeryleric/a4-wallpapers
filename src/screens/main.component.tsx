@@ -1,6 +1,6 @@
 import {
     ActivityIndicator,
-    BackHandler,
+    BackHandler, FlatList,
     Modal,
     Platform,
     SafeAreaView,
@@ -10,12 +10,12 @@ import {
     Text,
     TouchableOpacity,
     View,
+    Image, TouchableWithoutFeedback,
 } from "react-native";
-import React, {useCallback, useEffect, useState} from "react";
+import React, {useCallback, useEffect, useMemo, useState} from "react";
 import {collection, getDocs} from "firebase/firestore";
 import {db} from "../util/config";
 import Tab from "../ui/tab.component";
-import FastImageLoader from "../ui/image-loader.component";
 import ImageViewer from "react-native-image-zoom-viewer";
 import RNFS from "react-native-fs";
 import {CameraRoll} from "@react-native-camera-roll/camera-roll";
@@ -26,6 +26,7 @@ import {setBothWallpapers} from "react-native-wallpaper-manager-one";
 import {AnalyticsCallOptions} from "firebase/analytics";
 import Toast from 'react-native-simple-toast';
 import CasImpl from "../CasImpl.ts";
+import _ from 'lodash';
 
 type TabData = Record<string, string>;
 type TabsData = Record<string, TabData>
@@ -62,26 +63,32 @@ CAS.init();
 
 const Main = () => {
     const [tabs, setTabs] = useState<TabsDoc>([]);
-    const [loading, setLoading] = useState(false);
-    const [activeTab, setActiveTab] = useState<string | null>(null);
-    const [urls, setUrls] = useState<{ url: string }[]>([]);
-    const [modal, setModal] = useState(false);
-    const [currentIndex, setCurrentIndex] = useState(0); // Индекс текущего изображения
+    const [isLoaded, setIsLoaded] = useState(false);
+    const [activeTab, setActiveTab] = useState<string>();
+    const [isImagePreviewVisible, setIsImagePreviewVisible] = useState(false);
+    const [shownImage, setShownImage] = useState<string>();
+
+    const images = useMemo(() => {
+        if (!activeTab) {
+            return [];
+        }
+        const single = tabs[0]?.tabs;
+        if (!single) {
+            return [];
+        }
+        return Object.entries(single[activeTab]).map(([, url]) => url);
+    }, [activeTab, tabs]);
 
     const handleTabPress = (tabName: string) => {
         if (activeTab === tabName) {
             return;
         }
         setActiveTab(tabName);
-        const images = Object.values(tabs[0].tabs[tabName]).map((url) => ({
-            url,
-        }));
-        setUrls(images);
     };
 
-    const handleImagePress = (index: number) => {
-        setModal(true);
-        setCurrentIndex(index);
+    const handleImagePress = (url: string) => {
+        setIsImagePreviewVisible(true);
+        setShownImage(url);
     };
 
     useEffect(() => {
@@ -90,31 +97,19 @@ const Main = () => {
             const dataSnapshot = await getDocs(dataCollection);
             const dataList = dataSnapshot.docs.map((doc) => doc.data()) as TabsDoc;
             setTabs(dataList);
-            setLoading(true);
+            setActiveTab(Object.keys(dataList[0].tabs)[0])
+            setIsLoaded(true);
         }
 
+        // noinspection JSIgnoredPromiseFromCall
         fetch();
     }, []);
 
-    useEffect(() => {
-        if (loading && tabs.length > 0) {
-            setActiveTab(Object.keys(tabs[0].tabs)[0]);
-        }
-    }, [tabs, loading]);
-
-    useEffect(() => {
-        if (loading && tabs && activeTab) {
-            const images = Object.values(tabs[0].tabs[activeTab]).map((url) => ({
-                url,
-            }));
-            setUrls(images);
-        }
-    }, [activeTab, loading]);
 
     useEffect(() => {
         const backAction = () => {
-            if (modal) {
-                setModal(false);
+            if (isImagePreviewVisible) {
+                setIsImagePreviewVisible(false);
                 return true; // Возвращаем true, чтобы предотвратить закрытие приложения
             }
             return false; // Возвращаем false, чтобы обычное поведение кнопки "назад" сохранилось
@@ -126,13 +121,12 @@ const Main = () => {
         );
 
         return () => backHandler.remove();
-    }, [modal]);
-
-    const getCurrentImageUrl = () => {
-        return urls[currentIndex].url;
-    };
+    }, [isImagePreviewVisible]);
 
     const saveImageToGallery = useCallback(async () => {
+        if (!shownImage) {
+            return;
+        }
         showToast("Загрузка...", Toast.SHORT)
         if (!await CAS.showRewarded(true)) {
             showToast("Не удалось загрузить, попробуйте позже.", Toast.SHORT)
@@ -140,7 +134,7 @@ const Main = () => {
         }
         // noinspection ES6MissingAwait
         logEvent("download_Wallpaper", {
-            image_url: getCurrentImageUrl(),
+            image_url: shownImage,
             tab: activeTab,
         });
 
@@ -153,7 +147,7 @@ const Main = () => {
                 default: `${RNFS.DownloadDirectoryPath}/${Math.random()}.jpg` // DownloadDirectoryPath - ANDROID ONLY
             });
             const downloadResult = await RNFS.downloadFile({
-                fromUrl: getCurrentImageUrl(),
+                fromUrl: shownImage,
                 toFile: downloadDest,
             }).promise;
 
@@ -189,9 +183,12 @@ const Main = () => {
 
             console.error(error);
         }
-    }, [getCurrentImageUrl]);
+    }, [shownImage]);
 
     const setWallpaper = useCallback(async () => {
+        if (!shownImage) {
+            return;
+        }
         showToast("Загрузка...", Toast.SHORT)
         if (!await CAS.showRewarded(true)) {
             showToast("Не удалось загрузить, попробуйте позже.", Toast.SHORT)
@@ -199,101 +196,137 @@ const Main = () => {
         }
         // noinspection ES6MissingAwait
         logEvent("set_Wallpaper", {
-            image_url: getCurrentImageUrl(),
+            image_url: shownImage,
             tab: activeTab,
         });
 
         showToast("Обои успешно установлены.", Toast.SHORT)
-        await setBothWallpapers(getCurrentImageUrl());
-    }, [getCurrentImageUrl])
+        await setBothWallpapers(shownImage);
+    }, [shownImage])
 
-    return (
-        <SafeAreaView style={styles.container}>
-            <View style={styles.header}>
-                <Text style={styles.title}>А4 Обои</Text>
+    const _renderImage = useCallback((url: string) => {
+        return (
+            <TouchableWithoutFeedback
+                onPress={() => {
+                    handleImagePress(url);
+
+                    setTimeout(() => {
+                        // noinspection JSIgnoredPromiseFromCall
+                        CAS.showInterstitial(Platform.OS === 'android');
+                    }, 1000);
+                }}>
+                <Image style={styles.image} source={{uri: url}}/>
+            </TouchableWithoutFeedback>
+        )
+    }, [handleImagePress]);
+
+    const _renderList = useCallback(() => {
+        const chunks: string[][] = _.chunk(images, 2);
+
+        return (
+            <FlatList
+                data={chunks}
+                renderItem={({item}) => {
+                    const [first, second] = item;
+                    return (
+                        <View style={styles.row}>
+                            {_renderImage(first)}
+                            {second ? _renderImage(second) : <View style={styles.mockImage}/>}
+                        </View>
+                    )
+                }}
+                contentContainerStyle={styles.contentContainer}
+            />
+        )
+    }, [images]);
+
+    const _renderLoader = useCallback(() => {
+        return !isLoaded && (
+            <View
+                style={{flex: 1, alignItems: "center", justifyContent: "center"}}
+            >
+                <ActivityIndicator size={"large"} color={"blue"}/>
             </View>
+        )
+    }, [isLoaded]);
 
-            {!loading && (
+    const _renderImagePreview = useCallback(() => {
+        return isImagePreviewVisible && shownImage && (
+            <Modal visible={isImagePreviewVisible} transparent={true}>
+                <ImageViewer
+                    pageAnimateTime={800}
+                    imageUrls={images.map(url => ({url}))}
+                    useNativeDriver={true}
+                    saveToLocalByLongPress={false}
+                    enablePreload={true}
+                    index={images.indexOf(shownImage)}
+                    onSwipeDown={() => setIsImagePreviewVisible(false)}
+                    enableSwipeDown={true}
+                    footerContainerStyle={() => null}
+                    onChange={(index) => index !== undefined && setShownImage(images[index])}
+                    menuContext={{
+                        saveToLocal: "Сохранить в галерею",
+                        cancel: "Отмена",
+                    }}
+                    renderHeader={() => (
+                        <TouchableOpacity
+                            style={{position: "absolute", top: 33, left: 33, zIndex: 99}}
+                            onPress={() => setIsImagePreviewVisible(false)}
+                        >
+                            <ChevronLeft size={35} color={"white"}/>
+                        </TouchableOpacity>
+                    )}
+                    loadingRender={() => (
+                        <View
+                            style={{
+                                flex: 1,
+                                alignItems: "center",
+                                justifyContent: "center",
+                            }}
+                        >
+                            <ActivityIndicator size={"large"}/>
+                        </View>
+                    )}
+                    style={{flex: 1}}
+                />
                 <View
-                    style={{flex: 1, alignItems: "center", justifyContent: "center"}}
+                    style={{
+                        position: "absolute",
+                        bottom: 90,
+                        width: "100%",
+                        alignItems: "center",
+                        justifyContent: "space-around",
+                        flexDirection: "row",
+                    }}
                 >
-                    <ActivityIndicator size={"large"} color={"blue"}/>
-                </View>
-            )}
-
-            {modal && (
-                <Modal visible={modal} transparent={true}>
-                    <ImageViewer
-                        pageAnimateTime={800}
-                        imageUrls={urls}
-                        useNativeDriver={true}
-                        saveToLocalByLongPress={false}
-                        enablePreload={true}
-                        index={currentIndex}
-                        onSwipeDown={() => setModal(false)}
-                        enableSwipeDown={true}
-                        footerContainerStyle={() => null}
-                        onChange={(index) => index !== undefined && setCurrentIndex(index)} // Обновляем индекс при смене изображения
-                        menuContext={{
-                            saveToLocal: "Сохранить в галерею",
-                            cancel: "Отмена",
-                        }}
-                        renderHeader={() => (
-                            <TouchableOpacity
-                                style={{position: "absolute", top: 33, left: 33, zIndex: 99}}
-                                onPress={() => setModal(false)}
-                            >
-                                <ChevronLeft size={35} color={"white"}/>
-                            </TouchableOpacity>
-                        )}
-                        loadingRender={() => (
-                            <View
-                                style={{
-                                    flex: 1,
-                                    alignItems: "center",
-                                    justifyContent: "center",
-                                }}
-                            >
-                                <ActivityIndicator size={"large"}/>
-                            </View>
-                        )}
-                        style={{flex: 1}}
-                    />
-                    <View
-                        style={{
-                            position: "absolute",
-                            bottom: 90,
-                            width: "100%",
-                            alignItems: "center",
-                            justifyContent: "space-around",
-                            flexDirection: "row",
-                        }}
+                    <TouchableOpacity
+                        style={styles.button}
+                        onPress={() => saveImageToGallery()}
                     >
-                        <TouchableOpacity
-                            style={styles.button}
-                            onPress={() => saveImageToGallery()}
-                        >
-                            <Save color={"white"} size={35}/>
-                            <Text style={styles.buttonText}>Скачать</Text>
+                        <Save color={"white"} size={35}/>
+                        <Text style={styles.buttonText}>Скачать</Text>
+                    </TouchableOpacity>
+                    {Platform.OS === "android" && (
+                        <TouchableOpacity style={styles.button} onPress={() => setWallpaper()}>
+                            <Wallpaper color={"white"} size={35}/>
+                            <Text style={styles.buttonText}>Установить</Text>
                         </TouchableOpacity>
-                        {Platform.OS === "android" && (
-                            <TouchableOpacity style={styles.button} onPress={() => setWallpaper()}>
-                                <Wallpaper color={"white"} size={35}/>
-                                <Text style={styles.buttonText}>Установить</Text>
-                            </TouchableOpacity>
-                        )}
+                    )}
 
-                        <TouchableOpacity
-                            style={styles.button}
-                            onPress={() => Share.share({message: urls[currentIndex].url})}
-                        >
-                            <Share2Icon color={"white"} size={35}/>
-                            <Text style={styles.buttonText}>Поделиться</Text>
-                        </TouchableOpacity>
-                    </View>
-                </Modal>
-            )}
+                    <TouchableOpacity
+                        style={styles.button}
+                        onPress={() => Share.share({message: shownImage})}
+                    >
+                        <Share2Icon color={"white"} size={35}/>
+                        <Text style={styles.buttonText}>Поделиться</Text>
+                    </TouchableOpacity>
+                </View>
+            </Modal>
+        )
+    }, [shownImage, images, saveImageToGallery, setWallpaper, isImagePreviewVisible]);
 
+    const _renderTabs = useCallback(() => {
+        return (
             <View>
                 <ScrollView
                     showsHorizontalScrollIndicator={false}
@@ -301,7 +334,7 @@ const Main = () => {
                     contentContainerStyle={styles.rowTab}
                 >
                     {tabs &&
-                        loading &&
+                        isLoaded &&
                         Object.entries(tabs[0].tabs).map(([tabName]) => (
                             <View key={tabName}>
                                 <TouchableOpacity
@@ -314,28 +347,18 @@ const Main = () => {
                         ))}
                 </ScrollView>
             </View>
-            <ScrollView contentContainerStyle={styles.contentContainer}>
-                {loading &&
-                    tabs &&
-                    Object.entries(tabs[0].tabs).map(
-                        ([tabName, urls]) =>
-                            activeTab === tabName &&
-                            Object.entries(urls).map(([urlKey, urlValue], index) => (
-                                <TouchableOpacity
-                                    key={index}
-                                    onPress={() => {
-                                        handleImagePress(index);
+        )
+    }, [shownImage, tabs, isLoaded, activeTab]);
 
-                                        setTimeout(() => {
-                                            CAS.showInterstitial(Platform.OS === 'android');
-                                        }, 1000);
-                                    }}
-                                >
-                                    <FastImageLoader style={styles.image} uri={urlValue} />
-                                </TouchableOpacity>
-                            )),
-                    )}
-            </ScrollView>
+    return (
+        <SafeAreaView style={styles.container}>
+            <View style={styles.header}>
+                <Text style={styles.title}>А4 Обои</Text>
+            </View>
+            {_renderLoader()}
+            {_renderImagePreview()}
+            {_renderTabs()}
+            {_renderList()}
             <View style={styles.bannerAd}>
                 <BannerAd size={BannerAdSize.Smart} refreshInterval={20}/>
             </View>
@@ -363,10 +386,7 @@ const styles = StyleSheet.create({
         gap: 15,
     },
     contentContainer: {
-        paddingHorizontal: 15,
-        flexDirection: "row",
-        gap: 30,
-        flexWrap: "wrap",
+        flexGrow: 1,
     },
     button: {
         alignItems: "center",
@@ -382,14 +402,24 @@ const styles = StyleSheet.create({
         fontWeight: "bold",
     },
     image: {
-        width: 140,
-        height: 230,
+        aspectRatio: 1 / 1.5,
+        flex: 1,
         borderRadius: 10,
+        backgroundColor: 'grey'
+    },
+    mockImage: {
+        aspectRatio: 1 / 1.5,
+        flex: 1,
     },
     bannerAd: {
         marginLeft: 30,
         marginTop: 12,
         width: "100%",
+    },
+    row: {
+        flexDirection: 'row',
+        columnGap: 10,
+        marginBottom: 10,
     },
 });
 
