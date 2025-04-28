@@ -2,7 +2,7 @@
   "project_info": {
     "project_number": "601668810320",
     "project_id": "wallpapers-17b71",
-    "storage_bucket": "wallpapers-17b71.appspot.com"
+    "storage_bucket": "wallpapers-17b71.firebasestorage.app"
   },
   "client": [
     {
